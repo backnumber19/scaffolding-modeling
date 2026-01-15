@@ -103,7 +103,7 @@ python src/train.py --model-path outputs/full_model.cbm
 ## Optuna 튜닝
 
 ```bash
-python src/tuner.py
+python src/optimizer.py
   --data-dir data
   --out-dir outputs
   --log-dir logs
