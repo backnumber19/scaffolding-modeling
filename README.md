@@ -4,6 +4,13 @@
 원본 데이터로부터 누수 없는 전처리/분할을 수행하고, CatBoost 기반 10-fold CV 및 SHAP 중요도 분석을 제공합니다.  
 Optuna 튜닝으로 하이퍼파라미터 탐색도 지원합니다.
 
+## 설치 (git clone)
+
+```
+git clone https://github.com/backnumber19/scaffolding-modeling.git
+cd scaffolding-modeling
+```
+
 ## 폴더 구조
 
 ```
