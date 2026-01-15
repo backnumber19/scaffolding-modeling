@@ -18,6 +18,7 @@ __pycache__/
 *.pdf
 *.png
 *.log
+*.cbm
 catboost_info/
 logs/
 data/
