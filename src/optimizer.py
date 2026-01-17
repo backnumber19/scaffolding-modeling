@@ -10,7 +10,7 @@ from catboost import CatBoostRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import r2_score
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler
 
@@ -63,12 +63,16 @@ def load_data(data_dir: Path, index_col: str, logger: logging.Logger | None = No
 
 
 def evaluate_cv(X, y, numeric_cols, categorical_cols, seed, folds, params):
-    kf = KFold(n_splits=folds, shuffle=True, random_state=seed)
+    y_log = np.log1p(y)
+    y_bins = pd.qcut(y, q=folds, labels=False, duplicates="drop")
+
+    skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
     scores = []
-    for tr_idx, val_idx in kf.split(X):
+    for tr_idx, val_idx in skf.split(X, y_bins):
         X_tr = X.iloc[tr_idx].copy()
         X_val = X.iloc[val_idx].copy()
-        y_tr, y_val = y[tr_idx], y[val_idx]
+        y_tr_log, y_val_log = y_log[tr_idx], y_log[val_idx]
+        y_val_orig = y[val_idx]
 
         _coerce_numeric(X_tr, numeric_cols)
         _coerce_numeric(X_val, numeric_cols)
@@ -80,14 +84,14 @@ def evaluate_cv(X, y, numeric_cols, categorical_cols, seed, folds, params):
         model = CatBoostRegressor(**params)
         model.fit(
             X_tr_t,
-            y_tr,
-            eval_set=[(X_val_t, y_val)],
+            y_tr_log,
+            eval_set=[(X_val_t, y_val_log)],
             use_best_model=True,
             verbose=False,
         )
 
-        pred = model.predict(X_val_t)
-        scores.append(r2_score(y_val, pred))
+        pred = np.expm1(model.predict(X_val_t))
+        scores.append(r2_score(y_val_orig, pred))
 
     return float(np.mean(scores))
 
@@ -99,14 +103,14 @@ def main():
     parser.add_argument("--index-col", type=str, default="TaskID")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--folds", type=int, default=10)
-    parser.add_argument("--trials", type=int, default=10)
+    parser.add_argument("--trials", type=int, default=200)
     parser.add_argument("--out-dir", type=str, default="outputs")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    logger = setup_logger(Path(args.log_dir), log_name="tuner.log")
+    logger = setup_logger(Path(args.log_dir), log_name="optimizer.log")
 
     X, y, target_name = load_data(data_dir, index_col=args.index_col, logger=logger)
     numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
@@ -118,8 +122,8 @@ def main():
             "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
             "depth": trial.suggest_int("depth", 3, 10),
             "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 10.0),
-            "loss_function": "RMSE",
-            "eval_metric": "RMSE",
+            "loss_function": "MAE",
+            "eval_metric": "MAE",
             "od_type": "Iter",
             "od_wait": trial.suggest_int("od_wait", 30, 150, step=10),
             "random_seed": args.seed,
@@ -131,7 +135,7 @@ def main():
         return score
 
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=args.trials)
+    study.optimize(objective, n_trials=args.trials, n_jobs=-1)
 
     best_params = study.best_params
     best_score = float(study.best_value)

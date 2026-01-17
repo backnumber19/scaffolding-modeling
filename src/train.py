@@ -14,7 +14,7 @@ import pandas as pd
 import shap
 from catboost import CatBoostRegressor, Pool
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -92,27 +92,32 @@ def train_cv(
 ):
     if cat_params is None:
         cat_params = {
-            "iterations": 1500,
-            "learning_rate": 0.03,
-            "depth": 6,
+            "iterations": 2000,
+            "learning_rate": 0.05,
+            "depth": 8,
             "l2_leaf_reg": 5,
-            "loss_function": "RMSE",
-            "eval_metric": "RMSE",
+            "loss_function": "MAE",
+            "eval_metric": "MAE",
             "od_type": "Iter",
             "od_wait": 100,
             "random_seed": seed,
             "task_type": "CPU",
         }
 
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    y_train_log = np.log1p(y_train)
+
+    y_bins = pd.qcut(y_train, q=n_splits, labels=False, duplicates="drop")
+
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     val_metrics = []
     test_metrics = []
     test_preds_folds = []
 
-    for fold, (tr_idx, val_idx) in enumerate(kf.split(X_train)):
+    for fold, (tr_idx, val_idx) in enumerate(skf.split(X_train, y_bins)):
         X_tr = X_train.iloc[tr_idx].copy()
         X_val = X_train.iloc[val_idx].copy()
-        y_tr, y_val = y_train[tr_idx], y_train[val_idx]
+        y_tr_log, y_val_log = y_train_log[tr_idx], y_train_log[val_idx]
+        y_val_orig = y_train[val_idx]
 
         _coerce_numeric(X_tr, numeric_cols)
         _coerce_numeric(X_val, numeric_cols)
@@ -127,21 +132,21 @@ def train_cv(
         model = CatBoostRegressor(**cat_params)
         model.fit(
             X_tr_t,
-            y_tr,
-            eval_set=[(X_val_t, y_val)],
+            y_tr_log,
+            eval_set=[(X_val_t, y_val_log)],
             use_best_model=True,
             verbose=verbose,
         )
 
-        val_pred = model.predict(X_val_t)
-        test_pred = model.predict(X_test_t)
+        val_pred = np.expm1(model.predict(X_val_t))
+        test_pred = np.expm1(model.predict(X_test_t))
 
         n_features = X_tr_t.shape[1]
-        r2 = r2_score(y_val, val_pred)
-        adj = adj_r2(r2, n=len(y_val), p=n_features)
-        mae = mean_absolute_error(y_val, val_pred)
-        rmse = mean_squared_error(y_val, val_pred) ** 0.5
-        rae_val = rae(y_val, val_pred)
+        r2 = r2_score(y_val_orig, val_pred)
+        adj = adj_r2(r2, n=len(y_val_orig), p=n_features)
+        mae = mean_absolute_error(y_val_orig, val_pred)
+        rmse = mean_squared_error(y_val_orig, val_pred) ** 0.5
+        rae_val = rae(y_val_orig, val_pred)
         val_metrics.append(
             {"R2": r2, "AdjR2": adj, "MAE": mae, "RMSE": rmse, "RAE": rae_val}
         )
@@ -247,8 +252,8 @@ def main():
         "learning_rate": args.lr,
         "depth": args.depth,
         "l2_leaf_reg": 5,
-        "loss_function": "RMSE",
-        "eval_metric": "RMSE",
+        "loss_function": "MAE",
+        "eval_metric": "MAE",
         "od_type": "Iter",
         "od_wait": 100,
         "random_seed": args.seed,
@@ -312,16 +317,18 @@ def main():
     except Exception:
         pass
 
+    y_train_log = np.log1p(y_train)
+
     full_model = CatBoostRegressor(**cat_params)
     full_model.fit(
         X_train_full,
-        y_train,
+        y_train_log,
         verbose=args.verbose,
     )
     shap_path = out_dir / "shap_summary.png"
     shap_summary_plot(full_model, X_train_full, shap_path, logger=logger)
 
-    full_pred = full_model.predict(X_test_full)
+    full_pred = np.expm1(full_model.predict(X_test_full))
     full_r2 = r2_score(y_test, full_pred)
     full_adj = adj_r2(full_r2, n=len(y_test), p=X_train_full.shape[1])
     full_mae = mean_absolute_error(y_test, full_pred)

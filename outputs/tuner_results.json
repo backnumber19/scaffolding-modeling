@@ -1,0 +1,10 @@
+{
+  "best_val_r2": 0.8055321789108462,
+  "best_params": {
+    "iterations": 2200,
+    "learning_rate": 0.025068333607124637,
+    "depth": 3,
+    "l2_leaf_reg": 4.836834766752154,
+    "od_wait": 80
+  }
+}
